@@ -1,0 +1,362 @@
+"""Page content. Run: python build_pages.py"""
+
+from build_site import page, simple_page, write, esc
+
+# ======================================================================
+# 1. Marketplace Fee & Profit Calculator
+# ======================================================================
+TOOL_HTML = """
+<section class="tool">
+  <h2>Your numbers</h2>
+
+  <div class="field">
+    <label for="platform">Marketplace <span class="hint">fee defaults change to match the marketplace</span></label>
+    <select id="platform">
+      <option value="etsy" selected>Etsy</option>
+      <option value="ebay">eBay</option>
+      <option value="tiktok">TikTok Shop</option>
+      <option value="depop">Depop</option>
+      <option value="shopify">Shopify (own store)</option>
+    </select>
+  </div>
+
+  <div class="grid2">
+    <div class="field">
+      <label for="price">Item price (what the buyer pays) <span class="hint">USD</span></label>
+      <input type="number" id="price" value="35" min="0" step="0.01">
+    </div>
+    <div class="field">
+      <label for="shipping">Shipping charged to buyer <span class="hint">USD</span></label>
+      <input type="number" id="shipping" value="5.99" min="0" step="0.01">
+    </div>
+    <div class="field">
+      <label for="cost">Your cost per item (COGS + shipping you pay) <span class="hint">USD</span></label>
+      <input type="number" id="cost" value="10" min="0" step="0.01">
+    </div>
+    <div class="field">
+      <label for="ads">Marketplace ads spend <span class="hint">% of revenue, 0 if none</span></label>
+      <input type="number" id="ads" value="3" min="0" step="0.1">
+    </div>
+    <div class="field">
+      <label for="offsite">Off-site ads rate <span class="hint">% of revenue, 0 if not in the program</span></label>
+      <input type="number" id="offsite" value="15" min="0" step="0.1">
+    </div>
+    <div class="field">
+      <label for="vol">Sales per month <span class="hint">for the projection</span></label>
+      <input type="number" id="vol" value="50" min="0" step="1">
+    </div>
+  </div>
+
+  <details style="margin:6px 0 18px">
+    <summary class="small" style="cursor:pointer"><strong>Fee assumptions (tap to edit)</strong></summary>
+    <div class="grid2" style="margin-top:14px">
+      <div class="field">
+        <label for="pct">Transaction / referral fee <span class="hint">%</span></label>
+        <input type="number" id="pct" value="6.5" min="0" step="0.1">
+      </div>
+      <div class="field">
+        <label for="payPct">Payment processing <span class="hint">%</span></label>
+        <input type="number" id="payPct" value="3" min="0" step="0.1">
+      </div>
+      <div class="field">
+        <label for="payFix">Payment processing fixed <span class="hint">USD per order</span></label>
+        <input type="number" id="payFix" value="0.25" min="0" step="0.01">
+      </div>
+      <div class="field">
+        <label for="listing">Listing fee <span class="hint">USD per sale</span></label>
+        <input type="number" id="listing" value="0.20" min="0" step="0.01">
+      </div>
+      <div class="field">
+        <label for="reg">Regulatory / other fee <span class="hint">% of item price</span></label>
+        <input type="number" id="reg" value="0.25" min="0" step="0.05">
+      </div>
+      <div class="field">
+        <label for="monthly">Monthly platform fee <span class="hint">USD, e.g. Shopify plan</span></label>
+        <input type="number" id="monthly" value="0" min="0" step="1">
+      </div>
+    </div>
+  </details>
+
+  <button class="btn" id="calcBtn" type="button">Calculate my real profit</button>
+
+  <div class="result" id="result" aria-live="polite">
+    <p class="muted" style="margin:0">Fill in the numbers and tap Calculate.</p>
+  </div>
+</section>
+
+<div class="promo" id="upsell" style="display:none"></div>
+"""
+
+TOOL_JS = r"""
+const $ = id => document.getElementById(id);
+const money = n => '$' + n.toFixed(2);
+const pct = n => n.toFixed(1) + '%';
+
+// Marketplace presets: fees are defaults, all still editable
+const PRESETS = {
+  etsy:    { pct: 6.5,  payPct: 3.0, payFix: 0.25, listing: 0.20, reg: 0.25, monthly: 0, offsite: 15 },
+  ebay:    { pct: 13.25, payPct: 0,  payFix: 0.30, listing: 0,    reg: 0,    monthly: 0, offsite: 0 },
+  tiktok:  { pct: 8.0,  payPct: 2.5, payFix: 0.30, listing: 0,    reg: 0,    monthly: 0, offsite: 0 },
+  depop:   { pct: 10.0, payPct: 3.0, payFix: 0.45, listing: 0,    reg: 0,    monthly: 0, offsite: 0 },
+  shopify: { pct: 0,    payPct: 2.9, payFix: 0.30, listing: 0,    reg: 0,    monthly: 39, offsite: 0 }
+};
+
+function readInputs() {
+  const n = id => { const v = parseFloat($(id).value); return isNaN(v) ? 0 : v; };
+  return {
+    price: n('price'), shipping: n('shipping'), cost: n('cost'),
+    ads: n('ads'), offsite: n('offsite'), vol: n('vol'),
+    pct: n('pct'), payPct: n('payPct'), payFix: n('payFix'),
+    listing: n('listing'), reg: n('reg'), monthly: n('monthly')
+  };
+}
+
+// profit = price*k - c  where k = 1 - pct/100 - payPct/100 - ads/100 - offsite/100 - reg/100
+//                       and c = payFix + listing + cost - shipping
+function profitOf(p, x) {
+  const k = 1 - x.pct/100 - x.payPct/100 - x.ads/100 - x.offsite/100 - x.reg/100;
+  const c = x.payFix + x.listing + x.cost - x.shipping;
+  return p * k - c;
+}
+
+function breakEvenPrice(x) {
+  // Price at which the item alone (no shipping charged) covers all fees + item cost.
+  const k = 1 - x.pct/100 - x.payPct/100 - x.ads/100 - x.offsite/100 - x.reg/100;
+  if (k <= 0.001) return NaN;
+  return (x.cost + x.payFix + x.listing) / k;
+}
+
+function priceForMargin(x, marginPct) {
+  // solve  ((p*k - c)/p) = m  =>  p = c / (k - m)
+  const k = 1 - x.pct/100 - x.payPct/100 - x.ads/100 - x.offsite/100 - x.reg/100;
+  const m = marginPct / 100;
+  if (k - m <= 0.001) return NaN;
+  return (x.cost + x.payFix + x.listing) / (k - m);
+}
+
+function breakdownFor(price, x) {
+  const revenue = price + x.shipping;
+  const tx = price * x.pct / 100;
+  const proc = revenue * x.payPct / 100 + x.payFix;
+  const listing = x.listing;
+  const reg = price * x.reg / 100;
+  const ads = revenue * x.ads / 100;
+  const off = revenue * x.offsite / 100;
+  return { revenue, tx, proc, listing, reg, ads, off };
+}
+
+function render() {
+  const x = readInputs();
+  if (x.price <= 0) {
+    $('result').innerHTML = '<p class="muted" style="margin:0">Enter an item price above 0.</p>';
+    return;
+  }
+  const b = breakdownFor(x.price, x);
+  const fees = b.tx + b.proc + b.listing + b.reg + b.ads + b.off;
+  const net = b.revenue - fees;          // after marketplace fees, before COGS
+  const totalCost = fees + x.cost;
+  const profit = b.revenue - totalCost;
+  const margin = profit / b.revenue * 100;
+  const be = breakEvenPrice(x);
+  const m30 = priceForMargin(x, 30);
+  const monthlyProfit = profit * x.vol - x.monthly;
+  const yearlyProfit = monthlyProfit * 12;
+
+  const verdict = profit > 0
+    ? `<span style="color:#047857">You keep ${money(profit)} per sale (${pct(margin)} margin)</span>`
+    : `<span style="color:#b91c1c">You lose ${money(Math.abs(profit))} per sale. Raise the price or cut costs.</span>`;
+
+  $('result').innerHTML = `
+    <div class="big">${money(profit)} <span class="small muted" style="font-weight:400">profit per sale</span></div>
+    <p style="margin:6px 0 0">${verdict}</p>
+    <table>
+      <tr><th>Buyer pays (item + shipping)</th><td>${money(b.revenue)}</td></tr>
+      <tr><th>Transaction fee</th><td>${money(b.tx)}</td></tr>
+      <tr><th>Payment processing</th><td>${money(b.proc)}</td></tr>
+      <tr><th>Listing fee</th><td>${money(b.listing)}</td></tr>
+      <tr><th>Regulatory / other</th><td>${money(b.reg)}</td></tr>
+      <tr><th>Your ads</th><td>${money(b.ads)}</td></tr>
+      <tr><th>Off-site ads</th><td>${money(b.off)}</td></tr>
+      <tr><th>Your item cost</th><td>${money(x.cost)}</td></tr>
+      <tr class="row-ok"><th>Total kept</th><td>${money(profit)}</td></tr>
+    </table>
+    <table>
+      <tr><th>Break-even item price (no shipping charged)</th><td>${isNaN(be) ? 'n/a' : money(Math.max(be, 0))}</td></tr>
+      <tr><th>Price for a 30% margin</th><td>${isNaN(m30) ? 'n/a' : money(m30)}</td></tr>
+      <tr><th>Profit at ${Math.round(x.vol)} sales/month</th><td>${money(monthlyProfit)}</td></tr>
+      <tr><th>Profit per year</th><td>${money(yearlyProfit)}</td></tr>
+    </table>
+  `;
+  const up = $('upsell');
+  up.style.display = 'block';
+  up.innerHTML = `<strong>Want this for every product you sell?</strong>
+    The <a href="/profit-tracker.html">Etsy &amp; Marketplace Profit Tracker</a> is a ready-made spreadsheet that
+    stores each product's price, fees and COGS and shows profit per item and per month automatically
+    (no formulas to build). <a href="/profit-tracker.html">See what's inside &rarr;</a>`;
+}
+
+$('calcBtn').addEventListener('click', render);
+$('platform').addEventListener('change', () => {
+  const p = PRESETS[$('platform').value];
+  if (!p) return;
+  $('pct').value = p.pct;
+  $('payPct').value = p.payPct;
+  $('payFix').value = p.payFix;
+  $('listing').value = p.listing;
+  $('reg').value = p.reg;
+  $('monthly').value = p.monthly;
+  $('offsite').value = p.offsite;
+  render();
+});
+['price','shipping','cost','ads','offsite','vol'].forEach(id =>
+  $(id).addEventListener('input', () => { if ($('result').querySelector('.big')) render(); }));
+
+render();
+"""
+
+SECTIONS = [
+    ("Why 'the price on your listing' is not your profit",
+     """<p>Every marketplace charges more than the number in its headline. On Etsy, a typical order pays a
+transaction fee, a payment-processing fee, a listing fee, a regulatory fee and — if the sale arrived
+through an off-site ad — a 15% off-site ads fee. Only then do you pay for the product itself.</p>
+<p>Sellers routinely price a $35 item as if they keep $35. This calculator exists to show the number that
+actually lands in your bank account, before you set the price.</p>"""),
+
+    ("The formula behind the result",
+     """<p>The calculator turns price and fees into a single linear equation, so it can also run backwards
+(what price do I need?). In plain English:</p>
+<ul>
+  <li><strong>Revenue</strong> = item price + shipping the buyer pays</li>
+  <li><strong>Marketplace fees</strong> = % transaction + % payment processing + fixed processing + listing + % regulatory + % ads + % off-site ads</li>
+  <li><strong>Profit</strong> = revenue − marketplace fees − your item cost − monthly platform fee</li>
+  <li><strong>Margin</strong> = profit ÷ revenue</li>
+  <li><strong>Break-even item price</strong> = (item cost + fixed fees) ÷ (1 − all % fees combined). It assumes you charge no shipping; if the buyer pays shipping, the real break-even is lower.</li>
+</ul>
+<p>If that last denominator gets close to zero, no price can save you — the fee percentages alone eat the
+entire sale. The calculator will show that as <em>n/a</em>, which is a signal to change how you sell, not just
+raise the price.</p>"""),
+
+    ("A worked example: $35 handmade item on Etsy",
+     """<p>Item $35, buyer pays $5.99 shipping, item cost $10, 3% Etsy Ads, 15% off-site ads hit, US 0.25% regulatory fee.</p>
+<table style="border-collapse:collapse;width:100%;max-width:560px">
+  <tr style="border-bottom:1px solid #e5e7eb"><td style="padding:6px 8px">Buyer pays</td><td style="text-align:right;padding:6px 8px">$40.99</td></tr>
+  <tr style="border-bottom:1px solid #e5e7eb"><td style="padding:6px 8px">Transaction fee 6.5%</td><td style="text-align:right;padding:6px 8px">−$2.27</td></tr>
+  <tr style="border-bottom:1px solid #e5e7eb"><td style="padding:6px 8px">Processing 3% + $0.25</td><td style="text-align:right;padding:6px 8px">−$1.48</td></tr>
+  <tr style="border-bottom:1px solid #e5e7eb"><td style="padding:6px 8px">Listing</td><td style="text-align:right;padding:6px 8px">−$0.20</td></tr>
+  <tr style="border-bottom:1px solid #e5e7eb"><td style="padding:6px 8px">Regulatory 0.25%</td><td style="text-align:right;padding:6px 8px">−$0.09</td></tr>
+  <tr style="border-bottom:1px solid #e5e7eb"><td style="padding:6px 8px">Etsy Ads 3%</td><td style="text-align:right;padding:6px 8px">−$1.23</td></tr>
+  <tr style="border-bottom:1px solid #e5e7eb"><td style="padding:6px 8px">Off-site ads 15%</td><td style="text-align:right;padding:6px 8px">−$6.15</td></tr>
+  <tr style="border-bottom:1px solid #e5e7eb"><td style="padding:6px 8px">Item cost</td><td style="text-align:right;padding:6px 8px">−$10.00</td></tr>
+  <tr><td style="padding:6px 8px"><strong>Profit</strong></td><td style="text-align:right;padding:6px 8px"><strong>$19.57</strong></td></tr>
+</table>
+<p style="margin-top:12px">A 48% loss of the headline price — and that is a <em>good</em> outcome. The same sale
+with no off-site ad hit leaves you $25.72.</p>"""),
+
+    ("The fees sellers forget",
+     """<ul>
+  <li><strong>Off-site ads are the silent killer.</strong> On Etsy, sellers earning under $10,000/year can opt out;
+above that, it is mandatory. An off-site ad sale gives away 15% (12% for higher-volume sellers) of the
+whole order — including shipping.</li>
+  <li><strong>Payment processing applies to shipping too.</strong> Shipping money is not yours. It gets charged
+the percentage fee before it ever reaches you.</li>
+  <li><strong>Repeat listing fees.</strong> $0.20 is charged every 4 months per listing, plus $0.20 each time you
+renew or relist after a sale.</li>
+  <li><strong>Regulatory operating fees.</strong> Etsy adds a country-specific percentage in some markets, and it
+has been raised more than once. Check your own seller dashboard for the current figure.</li>
+  <li><strong>Discounts come out of your margin, not the fee.</strong> A 20% off sale removes 20% of revenue but
+the fee percentages still apply to the lower price — so your profit falls faster than the discount.</li>
+</ul>
+<p class="small muted">Fee schedules change. Always confirm the exact numbers in your marketplace's seller
+help centre before pricing; this tool lets you edit every rate for that reason.</p>"""),
+]
+
+FAQS = [
+    ("Does Etsy charge a fee on shipping?",
+     "Yes. The 6.5% transaction fee applies to the item price plus shipping and gift-wrap charges, and "
+     "payment processing applies to the full payment amount. That is why this calculator applies percentage "
+     "fees to item + shipping, not just the item."),
+    ("How much does Etsy take per sale in 2026?",
+     "For a typical US sale: a $0.20 listing fee, 6.5% transaction fee, 3% + $0.25 payment processing, "
+     "a small regulatory fee that varies by location, and 15% (or 12%) if the sale came through an off-site ad. "
+     "On a $35 item with $5.99 shipping that is roughly $10–$16 in fees depending on ads."),
+    ("What is the break-even price?",
+     "The price at which profit is exactly zero. Below it you lose money on every sale even though the order "
+     "looks successful. The calculator solves for it directly, so you can see the floor before you set a price."),
+    ("Why does the calculator say n/a for break-even?",
+     "Because your combined percentage fees add up to 100% or more of revenue. No price can produce a profit — "
+     "the fix is structural: drop the ad rate, negotiate costs, or sell the item somewhere with lower fees."),
+    ("Is this accurate for my country?",
+     "The percentages are defaults, not gospel. Etsy, eBay and TikTok Shop all vary fees by country and seller "
+     "level. Open the 'Fee assumptions' panel and replace every rate with the one shown in your seller dashboard; "
+     "the maths will then be exact for you."),
+]
+
+write(
+    "tools/marketplace-fee-calculator.html",
+    page(
+        slug="marketplace-fee-calculator",
+        title="Marketplace Fee & Profit Calculator (Etsy, eBay, TikTok Shop) — 2026",
+        description="Free calculator for your real profit per sale after Etsy, eBay, TikTok Shop, Depop and Shopify fees, ads and COGS. Includes break-even and 30%-margin price.",
+        h1="Marketplace Fee & Profit Calculator",
+        lede="See what you actually keep. Enter a price, the fees your marketplace charges and your item cost — get profit per sale, margin, break-even price and the price you need for a 30% margin.",
+        tool_html=TOOL_HTML,
+        js=TOOL_JS,
+        sections=SECTIONS,
+        faqs=FAQS,
+    ),
+)
+
+# ======================================================================
+# 2. Homepage
+# ======================================================================
+HOME = """
+<p class="lede">Free, fast calculators for people who sell online or work for themselves. No sign-up, no
+paywall — the maths runs in your browser.</p>
+
+<div class="cards">
+  <a class="card" href="/tools/marketplace-fee-calculator.html">
+    <h3>Marketplace Fee &amp; Profit Calculator</h3>
+    <p>Etsy, eBay, TikTok Shop, Depop, Shopify. Real profit per sale, break-even price, 30%-margin price.</p>
+  </a>
+  <a class="card" href="/etsy-fees-2026.html">
+    <h3>Etsy Fees 2026: full breakdown</h3>
+    <p>Every fee Etsy charges in 2026, with a worked example and the ones most sellers miss.</p>
+  </a>
+  <a class="card" href="/etsy-vs-shopify-fees.html">
+    <h3>Etsy vs Shopify fees</h3>
+    <p>When the &ldquo;cheaper&rdquo; platform is actually more expensive, and the break-even sales volume.</p>
+  </a>
+  <a class="card" href="/profit-tracker.html">
+    <h3>Profit Tracker spreadsheet</h3>
+    <p>Track profit per product and per month in one file. A one-time download instead of another subscription.</p>
+  </a>
+</div>
+
+<section class="prose">
+<h2>Why this site exists</h2>
+<p>Marketplace fees are deliberately confusing: a percentage here, a fixed fee there, an ad fee that only
+applies sometimes. A seller can make 50 sales a month and still not know whether they are profitable.</p>
+<p>These tools answer one question honestly: <strong>after every fee, what is left?</strong> They are free
+because the site is supported by a small affiliate commission when you choose to try a tool linked from an
+article — never by selling your data. See the <a href="/disclosure.html">affiliate disclosure</a>.</p>
+<h2>What's coming next</h2>
+<ul>
+  <li>eBay, Amazon FBA and TikTok Shop dedicated calculators</li>
+  <li>Print-on-demand profit calculator</li>
+  <li>Digital-product pricing calculator (no shipping, no COGS)</li>
+  <li>A monthly fee-change log so the numbers on this site stay correct</li>
+</ul>
+</section>
+"""
+
+write(
+    "index.html",
+    simple_page(
+        path="index.html",
+        title="RateWise — free profit and fee calculators for online sellers",
+        description="Free calculators for marketplace sellers: see your real profit after Etsy, eBay, TikTok Shop and Shopify fees. Break-even price, margin, monthly projections.",
+        h1="Know your real profit",
+        body_html=HOME,
+    ),
+)
+print("done")

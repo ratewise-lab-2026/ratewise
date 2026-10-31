@@ -1,0 +1,10 @@
+# Affiliate redirects for Cloudflare Pages.
+# Swap the destination URLs for your own affiliate links once programs approve you.
+# Never change the left-hand side: existing pages link to /go/<name>.
+#
+# Example:
+# /go/shopify  https://shopify.pxf.io/YOUR-LINK  302
+
+/etsy-fee-calculator.html   /tools/marketplace-fee-calculator.html  301
+/etsy-fee-calculator       /tools/marketplace-fee-calculator.html  301
+/fee-calculator.html        /tools/marketplace-fee-calculator.html  301
