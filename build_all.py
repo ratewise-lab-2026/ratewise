@@ -8,8 +8,13 @@ import re
 import build_pages
 import build_pages2
 from build_site import SITE, not_found_page, write
+from indexnow import KEY
 
 ROOT = pathlib.Path(__file__).resolve().parent
+
+# IndexNow ownership file: must sit at the site root and contain exactly the key
+(ROOT / f"{KEY}.txt").write_text(KEY + "\n", encoding="utf-8")
+print(f"IndexNow key file written: {KEY}.txt")
 
 # 404 page (GitHub Pages / Cloudflare serve it for unknown URLs)
 write("404.html", not_found_page())

@@ -13,6 +13,8 @@ import html
 import json
 import pathlib
 
+import settings
+
 ROOT = pathlib.Path(__file__).resolve().parent
 SITE = "https://ratewise-lab-2026.github.io/ratewise"   # real public URL (GitHub Pages, project site)
 SITE_NAME = "RateWise"
@@ -43,6 +45,21 @@ FOOTER = """
     </div>
   </div>
 </footer>"""
+
+
+def _head_extras() -> str:
+    """Search-engine verification meta tags and optional analytics snippet."""
+    parts = []
+    if settings.GOOGLE_VERIFICATION:
+        parts.append(f'<meta name="google-site-verification" content="{settings.GOOGLE_VERIFICATION}">')
+    if settings.BING_VERIFICATION:
+        parts.append(f'<meta name="msvalidate.01" content="{settings.BING_VERIFICATION}">')
+    if settings.BAIDU_VERIFICATION:
+        parts.append(f'<meta name="baidu-site-verification" content="{settings.BAIDU_VERIFICATION}">')
+    if settings.ANALYTICS_SNIPPET:
+        parts.append(settings.ANALYTICS_SNIPPET)
+    return "\n".join(parts)
+
 
 
 def esc(s: str) -> str:
@@ -147,6 +164,7 @@ def page(
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <script type="application/ld+json">{webapp_ld}</script>
 {faq_ld}
+{_head_extras()}
 </head>
 <body>
 {NAV}
@@ -182,6 +200,7 @@ def simple_page(*, path: str, title: str, description: str, h1: str, body_html: 
 <meta name="robots" content="index,follow">
 <link rel="stylesheet" href="/assets/style.css">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+{_head_extras()}
 </head>
 <body>
 {NAV}
