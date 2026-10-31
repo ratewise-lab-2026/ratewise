@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://ratewise.pages.dev/sitemap.xml
+Sitemap: https://ratewise-lab-2026.github.io/ratewise/sitemap.xml

@@ -14,7 +14,7 @@ import json
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent
-SITE = "https://ratewise.pages.dev"        # <-- replace with your real URL
+SITE = "https://ratewise-lab-2026.github.io/ratewise"   # real public URL (GitHub Pages, project site)
 SITE_NAME = "RateWise"
 TAGLINE = "Free calculators for freelancers, sellers and side-hustlers"
 
